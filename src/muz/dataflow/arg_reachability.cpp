@@ -3,14 +3,14 @@ Copyright (c) 2015 Microsoft Corporation
 
 Module Name:
 
-arg_reachability.cpp
+    arg_reachability.cpp
 
 Abstract:
 
-Abstract domain for tracking argument reachability.
+    Abstract domain for tracking argument reachability.
 
 Author:
-Henning Guenther (t-hennig)
+    Henning Guenther (t-hennig)
 
 --*/
 
@@ -165,7 +165,7 @@ namespace datalog {
     void arg_reachability_info::propagate_down(arg_reachability_ctx& ctx, const rule* r, fact_writer<arg_reachability_info>& tail_facts) const {
         taint_tracer& tr = ctx.m_tracer;
         tr.reset();
-        if (m_reachable.size() > 0) {
+        if (!m_reachable.empty()) {
             for (unsigned i = 0; i < r->get_head()->get_num_args(); ++i) {
                 expr* head_arg = r->get_head()->get_arg(i);
                 if (is_var(head_arg)) {

@@ -69,7 +69,9 @@ namespace datalog {
     typedef dataflow_engine<arg_reachability_info> arg_reachability;
 
 
-    // TODO Add comment
+    /* This class is used to track reachability across terms.
+       For example, given the expression x=y & b=x+1 & z=a and the reachable
+       set {b}, the taint tracer deduces that {b,x,y} are all reachable. */
     class taint_tracer : basic_union_find {
         unsigned m_root;
         unsigned m_reachable_root;
@@ -82,12 +84,14 @@ namespace datalog {
             m_reachable_root = UINT_MAX;
         }
 
+        // Add another conjunct to the considered formula.
         void process(expr* e) {
             m_root = UINT_MAX;
             for_each_expr_core<taint_tracer, expr_fast_mark1, false, true>(*this, m_visited, e);
             m_visited.reset();
         }
 
+        // Mark a variable as reachable.
         void set_reachable(unsigned idx) {
             if (m_reachable_root == UINT_MAX) {
                 m_reachable_root = find(idx);
@@ -96,10 +100,12 @@ namespace datalog {
             }
         }
 
+        // Check if a variable is reachable.
         bool is_reachable(unsigned v) const {
             return find(v) == m_reachable_root;
         }
 
+        // Visitor interface. Do not call directly!
         void operator()(var* e) {
             SASSERT(e->get_idx() < UINT_MAX);
             unsigned idx = find(e->get_idx());
@@ -112,7 +118,9 @@ namespace datalog {
             }
         }
 
+        // Visitor interface. Do not call directly!
         void operator()(app* e) const {}
+        // Visitor interface. Do not call directly!
         void operator()(quantifier* e) const {}
     };
 
