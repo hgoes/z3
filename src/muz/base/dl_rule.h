@@ -234,6 +234,7 @@ namespace datalog {
 
         /** make sure there are not non-quantified variables that occur only in interpreted predicates */
         void fix_unbound_vars(rule_ref& r, bool try_quantifier_elimination);
+        void fix_unbound_vars(expr_free_vars& vars, expr_ref_vector& tail, bool try_quantifier_elimination);
 
         /**
            \brief add proof that new rule is obtained by rewriting old rule.
