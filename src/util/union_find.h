@@ -217,11 +217,11 @@ class basic_union_find {
         return v >= get_num_vars() || m_find[v] == v; 
     }
     
-    void merge(unsigned v1, unsigned v2) {
+    unsigned merge(unsigned v1, unsigned v2) {
         unsigned r1 = find(v1);
         unsigned r2 = find(v2);
         if (r1 == r2)
-            return;
+            return r2;
         ensure_size(v1);
         ensure_size(v2);
         if (m_size[r1] > m_size[r2])
@@ -229,6 +229,7 @@ class basic_union_find {
         m_find[r1] = r2;
         m_size[r2] += m_size[r1];
         std::swap(m_next[r1], m_next[r2]);
+        return r2;
     }
     
     void reset() {
