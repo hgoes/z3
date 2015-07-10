@@ -45,6 +45,7 @@ Revision History:
 #include"dl_mk_subsumption_checker.h"
 #include"dl_mk_partial_equiv.h"
 #include"dl_mk_coi_filter.h"
+#include"dl_mk_coi_arg_filter.h"
 #include"dl_mk_filter_rules.h"
 #include"dl_mk_rule_inliner.h"
 #include"dl_mk_interp_tail_simplifier.h"
@@ -298,6 +299,9 @@ namespace datalog {
 #ifdef _MIN_DONE_
         transf.register_plugin(alloc(mk_coi_filter, m_context));
 #endif
+        if (m_context.xform_slice()) {
+            transf.register_plugin(alloc(mk_coi_arg_filter, m_context));
+        }
         transf.register_plugin(alloc(mk_filter_rules, m_context));        
         transf.register_plugin(alloc(mk_simple_joins, m_context));
         if (m_context.unbound_compressor()) {

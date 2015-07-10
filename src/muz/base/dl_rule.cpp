@@ -621,98 +621,85 @@ namespace datalog {
         return out << mk_ismt2_pp(fml, m);
     }
 
+    void rule_manager::fix_unbound_vars(rule_ref& r, bool try_quantifier_elimination) {
 
-    void rule_manager::reduce_unbound_vars(rule_ref& r) {
-        unsigned ut_len = r->get_uninterpreted_tail_size();
-        unsigned t_len = r->get_tail_size();
-        expr_ref_vector conjs(m);
+        unsigned utail_size = r->get_uninterpreted_tail_size();
+        unsigned tail_size = r->get_tail_size();
 
-        if (ut_len == t_len) {
+        if (utail_size == tail_size) // Nothing to fix
             return;
+
+        expr_ref_vector tail(m);
+
+        // Find free vars in the head and uninterpreted tail
+        m_free_vars.reset();
+        m_free_vars.accumulate(r->get_head());
+        for (unsigned i = 0; i < utail_size; ++i) {
+            m_free_vars.accumulate(r->get_tail(i));
         }
 
-        reset_collect_vars();
-        accumulate_vars(r->get_head());
-        for (unsigned i = 0; i < ut_len; ++i) {
-            accumulate_vars(r->get_tail(i));
+        for (unsigned i = utail_size; i < tail_size; ++i) {
+            tail.push_back(r->get_tail(i));
         }
-        var_idx_set& index_set = finalize_collect_vars();
-        for (unsigned i = ut_len; i < t_len; ++i) {
-            conjs.push_back(r->get_tail(i));
-        }
-        m_qe(index_set, false, conjs);
-        bool change = conjs.size() != t_len - ut_len;
-        for (unsigned i = 0; !change && i < conjs.size(); ++i) {
-            change = r->get_tail(ut_len+i) != conjs[i].get();
+
+        fix_unbound_vars(m_free_vars, tail, try_quantifier_elimination);
+
+        bool change = tail.size() != tail_size - utail_size;
+        if (!change) {
+            for (unsigned i = 0; i < tail.size(); ++i) {
+                if (r->get_tail(i) != tail[i].get()) {
+                    change = true;
+                    break;
+                }
+            }
         }
         if (change) {
-            app_ref_vector tail(m);
-            svector<bool> tail_neg;
-            for (unsigned i = 0; i < ut_len; ++i) {
-                tail.push_back(r->get_tail(i));
-                tail_neg.push_back(r->is_neg_tail(i));
+            app_ref_vector new_tail(m);
+            svector<bool> new_tail_neg;
+
+            for (unsigned i = 0; i < utail_size; ++i) {
+                new_tail.push_back(r->get_tail(i));
+                new_tail_neg.push_back(r->is_neg_tail(i));
             }
-            for (unsigned i = 0; i < conjs.size(); ++i) {
-                tail.push_back(ensure_app(conjs[i].get()));
+            for (unsigned i = 0; i < tail.size(); ++i) {
+                new_tail.push_back(ensure_app(tail[i].get()));
             }
-            tail_neg.resize(tail.size(), false);
-            r = mk(r->get_head(), tail.size(), tail.c_ptr(), tail_neg.c_ptr());
-            TRACE("dl", r->display(m_ctx, tout << "reduced rule\n"););
+            new_tail_neg.resize(utail_size + tail.size(), false);
+            rule_ref old_r = r;
+            r = mk(r->get_head(), new_tail.size(), new_tail.c_ptr(), new_tail_neg.c_ptr());
+            r->set_accounting_parent_object(m_ctx, old_r);
         }
     }
 
-    void rule_manager::fix_unbound_vars(rule_ref& r, bool try_quantifier_elimination) {
-
-        reduce_unbound_vars(r);
-
-        if (!m_ctx.fix_unbound_vars()) {
+    void rule_manager::fix_unbound_vars(expr_free_vars& vars, expr_ref_vector& tail, bool try_quantifier_elimination) {
+        var_idx_set var_set;
+        for (unsigned i = 0; i < vars.size(); ++i) {
+            if (vars.contains(i))
+                var_set.insert(i);
+        }
+        m_qe(var_set, false, tail);
+        
+        if (!m_ctx.fix_unbound_vars())
             return;
-        }
-
-        unsigned ut_len = r->get_uninterpreted_tail_size();
-        unsigned t_len = r->get_tail_size();
-
-        if (ut_len == t_len) {
-            // no interpreted tail to fix
-            return;
-        }
-
-        var_counter vctr;
-        app_ref_vector tail(m);
-        svector<bool> tail_neg;
-        app_ref head(r->get_head(), m);
-
-        vctr.count_vars(head);
-
-        for (unsigned i = 0; i < ut_len; i++) {
-            app * t = r->get_tail(i);
-            vctr.count_vars(t);
-            tail.push_back(t);
-            tail_neg.push_back(r->is_neg_tail(i));
-        }
 
         var_idx_set unbound_vars;
         expr_ref_vector tails_with_unbound(m);
 
-        for (unsigned i = ut_len; i < t_len; i++) {
-            app * t = r->get_tail(i);
-            m_free_vars(t);
+        for (unsigned i = 0; i < tail.size(); ++i) {
+            expr* tail_el = tail[i].get();
+            m_free_vars(tail_el);
             bool has_unbound = false;
             unsigned iv_size = m_free_vars.size();
-            for (unsigned i=0; i<iv_size; i++) {
-                if (!m_free_vars[i]) { continue; }
-                if (vctr.get(i)==0) {
+            for (unsigned j = 0; j < iv_size; ++j) {
+                if (!m_free_vars[j]) { continue; }
+                if (!vars.contains(j)) {
                     has_unbound = true;
-                    unbound_vars.insert(i);
+                    unbound_vars.insert(j);
                 }
             }
-
             if (has_unbound) {
-                tails_with_unbound.push_back(t);
-            }
-            else {
-                tail.push_back(t);
-                tail_neg.push_back(false);
+                tails_with_unbound.push_back(tail_el);
+                tail.erase(i--);
             }
         }
 
@@ -720,16 +707,14 @@ namespace datalog {
             //there are no unbound interpreted tail variables
             return;
         }
+
         expr_ref unbound_tail(m);
         bool_rewriter(m).mk_and(tails_with_unbound.size(), tails_with_unbound.c_ptr(), unbound_tail);
 
         unsigned q_var_cnt = unbound_vars.num_elems();
-
-        collect_rule_vars(r);
         expr_ref_vector subst(m);
         ptr_vector<sort> qsorts;
-        qsorts.resize(q_var_cnt);
-
+        
         unsigned q_idx = 0;
         for (unsigned v = 0; v < m_free_vars.size(); ++v) {
             sort * v_sort = m_free_vars[v];
@@ -742,8 +727,7 @@ namespace datalog {
             if (unbound_vars.contains(v)) {
                 new_idx = q_idx++;
                 qsorts.push_back(v_sort);
-            }
-            else {
+            } else {
                 new_idx = v + q_var_cnt;
             }
             subst.push_back(m.mk_var(new_idx, v_sort));
@@ -766,27 +750,22 @@ namespace datalog {
         quant_tail = m.mk_exists(q_var_cnt, qsorts.c_ptr(), qnames.c_ptr(), unbound_tail_pre_quant);
 
         if (try_quantifier_elimination) {
-            TRACE("dl_rule_unbound_fix_pre_qe", 
-                tout<<"rule: ";
-                r->display(m_ctx, tout);
-                tout<<"tail with unbound vars: "<<mk_pp(unbound_tail, m)<<"\n";
-                tout<<"quantified tail: "<<mk_pp(quant_tail, m)<<"\n";
+            TRACE("dl_rule_unbound_fix_pre_qe",
+                tout << "tail with unbound vars: " << mk_pp(unbound_tail, m) << "\n";
+                tout << "quantified tail: " << mk_pp(quant_tail, m) << "\n";
             );
 
             proof_ref pr(m);
             qe::expr_quant_elim_star1 simpl(m, m_ctx.get_fparams());
             simpl(quant_tail, fixed_tail, pr);
-        }
-        else {
+        } else {
             fixed_tail = quant_tail;
         }
 
-        TRACE("dl_rule_unbound_fix", 
-            tout<<"rule: ";
-            r->display(m_ctx, tout);
-            tout<<"tail with unbound vars: "<<mk_pp(unbound_tail, m)<<"\n";
-            tout<<"quantified tail: "<<mk_pp(quant_tail, m)<<"\n";
-            tout<<"fixed tail: "<<mk_pp(fixed_tail, m)<<"\n";
+        TRACE("dl_rule_unbound_fix",
+            tout << "tail with unbound vars: " << mk_pp(unbound_tail, m) << "\n";
+            tout << "quantified tail: " << mk_pp(quant_tail, m) << "\n";
+            tout << "fixed tail: " << mk_pp(fixed_tail, m) << "\n";
         );
 
         if (is_var(fixed_tail) || ::is_quantifier(fixed_tail)) {
@@ -796,13 +775,7 @@ namespace datalog {
 
         if (!m.is_true(fixed_tail.get())) {
             tail.push_back(to_app(fixed_tail.get()));
-            tail_neg.push_back(false);
         }
-
-        SASSERT(tail.size()==tail_neg.size());
-        rule_ref old_r = r;
-        r = mk(head, tail.size(), tail.c_ptr(), tail_neg.c_ptr());
-        r->set_accounting_parent_object(m_ctx, old_r);
     }
 
     void rule_manager::mk_rule_rewrite_proof(rule& old_rule, rule& new_rule) {
