@@ -119,10 +119,7 @@ namespace datalog {
         arg_reachability e2(ctx2, source);
         e1.run_bottom_up();
         e2.run_top_down();
-        e1.dump(std::cout);
-        e2.dump(std::cout);
         e1.intersect(e2);
-        //e1.dump(std::cout);
         TRACE("dl", e1.dump(tout << "Argument COI:" << std::endl););
         rule_set *result = transform(m_replacements, source, e1);
         if (m_context.get_model_converter()) {
