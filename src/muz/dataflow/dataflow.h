@@ -68,7 +68,7 @@ namespace datalog {
             typename fact_db::entry *entr;
             if (m_facts.insert_if_not_there_core(sym, Fact::null_fact, entr)) {
                 // This is a new fact
-                entr->get_data().m_value = Fact(sym);
+                new(&entr->get_data().m_value) Fact(sym);
             }
             return entr->get_data().m_value;
         }

@@ -301,6 +301,7 @@ namespace datalog {
     bool context::xform_coi() const { return m_params->xform_coi(); }
     bool context::xform_slice() const { return m_params->xform_slice(); }
     bool context::xform_bit_blast() const { return m_params->xform_bit_blast(); }    
+    unsigned context::xform_expval() const { return m_params->xform_expval(); }
     bool context::karr() const { return m_params->xform_karr(); }
     bool context::scale() const { return m_params->xform_scale(); }
     bool context::magic() const { return m_params->xform_magic(); }

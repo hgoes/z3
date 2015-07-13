@@ -46,6 +46,8 @@ Revision History:
 #include"dl_mk_partial_equiv.h"
 #include"dl_mk_coi_filter.h"
 #include"dl_mk_coi_arg_filter.h"
+#include"dl_mk_rule_exploder.h"
+#include"dl_mk_rule_exploder2.h"
 #include"dl_mk_filter_rules.h"
 #include"dl_mk_rule_inliner.h"
 #include"dl_mk_interp_tail_simplifier.h"
@@ -301,6 +303,9 @@ namespace datalog {
 #endif
         if (m_context.xform_slice()) {
             transf.register_plugin(alloc(mk_coi_arg_filter, m_context));
+        }
+        if (m_context.xform_expval() > 0) {
+            transf.register_plugin(alloc(mk_rule_exploder2, m_context, m_context.xform_expval()));
         }
         transf.register_plugin(alloc(mk_filter_rules, m_context));        
         transf.register_plugin(alloc(mk_simple_joins, m_context));
