@@ -165,11 +165,6 @@ namespace datalog {
 
         unsigned extract_horn(expr* fml, app_ref_vector& body, app_ref& head);
 
-        /**
-           \brief Perform cheap quantifier elimination to reduce the number of variables in the interpreted tail.
-         */
-        void reduce_unbound_vars(rule_ref& r);
-
         void reset_collect_vars();
 
         var_idx_set& finalize_collect_vars();

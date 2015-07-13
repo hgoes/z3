@@ -621,46 +621,6 @@ namespace datalog {
         return out << mk_ismt2_pp(fml, m);
     }
 
-
-    void rule_manager::reduce_unbound_vars(rule_ref& r) {
-        unsigned ut_len = r->get_uninterpreted_tail_size();
-        unsigned t_len = r->get_tail_size();
-        expr_ref_vector conjs(m);
-
-        if (ut_len == t_len) {
-            return;
-        }
-
-        reset_collect_vars();
-        accumulate_vars(r->get_head());
-        for (unsigned i = 0; i < ut_len; ++i) {
-            accumulate_vars(r->get_tail(i));
-        }
-        var_idx_set& index_set = finalize_collect_vars();
-        for (unsigned i = ut_len; i < t_len; ++i) {
-            conjs.push_back(r->get_tail(i));
-        }
-        m_qe(index_set, false, conjs);
-        bool change = conjs.size() != t_len - ut_len;
-        for (unsigned i = 0; !change && i < conjs.size(); ++i) {
-            change = r->get_tail(ut_len+i) != conjs[i].get();
-        }
-        if (change) {
-            app_ref_vector tail(m);
-            svector<bool> tail_neg;
-            for (unsigned i = 0; i < ut_len; ++i) {
-                tail.push_back(r->get_tail(i));
-                tail_neg.push_back(r->is_neg_tail(i));
-            }
-            for (unsigned i = 0; i < conjs.size(); ++i) {
-                tail.push_back(ensure_app(conjs[i].get()));
-            }
-            tail_neg.resize(tail.size(), false);
-            r = mk(r->get_head(), tail.size(), tail.c_ptr(), tail_neg.c_ptr());
-            TRACE("dl", r->display(m_ctx, tout << "reduced rule\n"););
-        }
-    }
-
     void rule_manager::fix_unbound_vars(rule_ref& r, bool try_quantifier_elimination) {
 
         unsigned utail_size = r->get_uninterpreted_tail_size();
