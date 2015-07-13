@@ -48,13 +48,12 @@ namespace datalog {
         }
 
         void propagate_down(const ctx_t& manager, const rule* r, fact_writer<reachability_info>& tail_facts) const {
-            if (m_reachable) {
-                for (unsigned i = 0; i < r->get_uninterpreted_tail_size(); ++i) {
-                    reachability_info& tail_fact = tail_facts.get(i);
-                    if (!tail_fact.m_reachable) {
-                        tail_fact.m_reachable = true;
-                        tail_facts.set_changed(i);
-                    }
+            SASSERT(m_reachable);
+            for (unsigned i = 0; i < r->get_uninterpreted_tail_size(); ++i) {
+                reachability_info& tail_fact = tail_facts.get(i);
+                if (!tail_fact.m_reachable) {
+                    tail_fact.m_reachable = true;
+                    tail_facts.set_changed(i);
                 }
             }
         }
