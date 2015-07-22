@@ -12,6 +12,7 @@ namespace datalog {
     struct tuple_set_ctx;
 
     class tuple_set {
+        func_decl* m_symbol;
         unsigned_vector m_indices;
         svector<expr*> m_tuples;
         bool has_tuples;
@@ -80,32 +81,9 @@ namespace datalog {
             m_num_cols -= rcols.size();
             m_tuples.shrink(m_num_cols*m_num_rows);
         }
-        int compare_rows(unsigned r1, unsigned r2) const {
-            const unsigned num_cols = m_indices.size();
-            for (unsigned i = 0; i < num_cols; ++i) {
-                expr *v1 = m_tuples[r1*num_cols + i];
-                expr *v2 = m_tuples[r2*num_cols + i];
-                if (v1 < v2) {
-                    return -1;
-                } else if (v1 > v2) {
-                    return 1;
-                }
-            }
-            return 0;
-        }
-        void swap_rows(tuple_set_ctx& ctx, unsigned r1, unsigned r2) {
-            //const unsigned num_cols = m_indices.size();
-            for (unsigned i = 0; i < m_num_cols; ++i) {
-                expr* v1 = m_tuples[r1*m_num_cols + i];
-                m_tuples[r1*m_num_cols + i] = m_tuples[r2*m_num_cols + i];
-                m_tuples[r2*m_num_cols + i] = v1;
-            }
-        }
         void remove_duplicates() {
             SASSERT(m_num_cols == m_indices.size());
             SASSERT(m_tuples.size() == m_num_cols*m_num_rows);
-            //const unsigned ncols = num_cols();
-            //unsigned nrows = num_rows();
             // Nothing to do?
             if (m_num_rows <= 1) 
                 return;
@@ -137,12 +115,14 @@ namespace datalog {
             }
             m_tuples.shrink(m_num_rows*m_num_cols);
         }
-        //void learn_tuples(tuple_set_ctx& ctx, app* tup, const tuple_set& var_facts);
         bool deduce_var_facts(tuple_set_ctx& ctx, rule* r, const fact_reader<tuple_set>& facts);
         bool deduce_base_facts(tuple_set_ctx& ctx, const rule* r);
-        bool insert_fact(ctx_t& ctx, svector<expr*> fact_buffer, unsigned fact_offset);
+        void distribute_query_facts(ctx_t& ctx, const rule* r, fact_setter<tuple_set>& setter) const;
+        static void distribute_query_fact(ctx_t& ctx, svector<expr*>& buffer, unsigned offs, const rule* r, fact_setter<tuple_set>& setter);
+        bool insert_fact(ctx_t& ctx, svector<expr*>& fact_buffer, unsigned fact_offset);
         unsigned count_unique_values(ctx_t& ctx, unsigned col) const;
         void prune(ctx_t& ctx);
+        bool is_full(ctx_t& ctx, unsigned col) const;
     public:
         unsigned num_cols() const {
             return m_num_cols;
@@ -151,8 +131,8 @@ namespace datalog {
             return m_num_rows;
         }
         static const tuple_set null_fact;
-        tuple_set() : has_tuples(false), m_num_rows(0), m_num_cols(0) { }
-        tuple_set(func_decl* sym) : m_num_rows(0), m_num_cols(sym->get_arity()), m_indices(sym->get_arity()), has_tuples(false) {
+        tuple_set() : m_symbol(0), has_tuples(false), m_num_rows(0), m_num_cols(0) { }
+        tuple_set(func_decl* sym) : m_symbol(sym), m_num_rows(0), m_num_cols(sym->get_arity()), m_indices(sym->get_arity()), has_tuples(false) {
             //m_indices.resize(m_num_cols);
             for (unsigned i = 0; i < m_num_cols; ++i) {
                 m_indices[i] = i;
@@ -169,13 +149,16 @@ namespace datalog {
         bool propagate_up(ctx_t& ctx, rule* r, const fact_reader<tuple_set>& facts) {
             return deduce_var_facts(ctx, r, facts);
         }
-        void propagate_down(ctx_t& ctx, const rule* r, fact_writer<tuple_set>& tail_facts) const {}
+        static void init_down(ctx_t& m, const rule_set& rules, fact_setter<tuple_set>& setter);
+        void propagate_down(ctx_t& ctx, const rule* r, fact_writer<tuple_set>& tail_facts) const {
+            distribute_query_facts(ctx, r, tail_facts);
+        }
         void dump(ctx_t& ctx, std::ostream& outp) const;
+        void intersect(ctx_t& ctx, const tuple_set& oth);
     };
     struct tuple_set_ctx {
         ast_manager& m;
         svector<expr*> m_buffer;
-        tuple_set m_var_facts;
         unsigned_vector m_iter;
         svector<const tuple_set*> m_tail_facts;
         bit_vector m_seen;

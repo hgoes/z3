@@ -4,73 +4,7 @@ namespace datalog {
 
     const tuple_set tuple_set::null_fact = tuple_set();
 
-#if 0
-    void tuple_set::learn_tuples(tuple_set_ctx& ctx, app* tup, const tuple_set& var_facts) {
-        // If the argument is instantiated using an unbounded variable,
-        // make the argument unbounded.
-        unsigned_vector to_delete;
-        unsigned column;
-        for (unsigned i = 0; i < m_indices.size(); ++i) {
-            expr* arg = tup->get_arg(m_indices[i]);
-            if (is_var(arg)) {
-                if (!var_facts.is_finite(to_var(arg)->get_idx(), column)) {
-                    to_delete.push_back(i);
-                }
-            }
-        }
-        if (!to_delete.empty()) {
-            delete_columns(to_delete);
-            remove_duplicates();
-        }
-        const unsigned num_cols = m_indices.size();
-        unsigned num_rows = m_tuples.size() / num_cols;
-
-        const unsigned var_num_cols = var_facts.m_indices.size();
-        const unsigned var_num_rows = var_facts.m_tuples.size() / var_num_cols;
-        // Begin to iterate over all facts
-        for (unsigned cur_fact = 0; cur_fact < var_num_rows; ++cur_fact) {
-            // Write the fact into the buffer.
-            ctx.m_buffer.resize(num_cols);
-            for (unsigned arg_idx = 0; arg_idx < num_cols; ++arg_idx) {
-                const unsigned arg_num = m_indices[arg_idx];
-                expr* arg = tup->get_arg(arg_num);
-                if (is_var(arg)) {
-                    unsigned var_fact_column;
-                    bool is_finite = var_facts.is_finite(to_var(arg)->get_idx(), var_fact_column);
-                    SASSERT(is_finite);
-                    arg = var_facts.m_tuples[cur_fact*var_num_cols + var_fact_column];
-                }
-                ctx.m_buffer[arg_idx] = arg;
-            }
-            // Check if the fact is already known
-            bool known = false;
-            for (unsigned i = 0; i < num_rows; ++i) {
-                bool same = true;
-                for (unsigned j = 0; j < num_cols; ++j) {
-                    if (ctx.m_buffer[j] != m_tuples[i*num_cols + j]) {
-                        same = false;
-                        break;
-                    }
-                }
-                if (same) {
-                    known = true;
-                    break;
-                }
-            }
-            if (!known) {
-                m_tuples.resize((num_rows + 1)*num_cols);
-                for (unsigned i = 0; i < num_cols; ++i) {
-                    m_tuples[num_rows*num_cols + 1] = ctx.m_buffer[i];
-                }
-                ++num_rows;
-            }
-        }
-    }
-#endif
-
-    bool tuple_set::insert_fact(ctx_t& ctx, svector<expr*> fact_buffer, unsigned fact_offset) {
-        //const unsigned ncols = num_cols();
-        //const unsigned nrows = num_rows();
+    bool tuple_set::insert_fact(ctx_t& ctx, svector<expr*>& fact_buffer, unsigned fact_offset) {
         if (m_num_cols == 0) {
             if (!has_tuples) {
                 has_tuples = true;
@@ -109,19 +43,11 @@ namespace datalog {
         SASSERT(m_num_cols == m_indices.size());
         SASSERT(m_tuples.size() == m_num_cols*m_num_rows);
         unsigned_vector& iter = ctx.m_iter;
-        //unsigned_vector& sizes = ctx.m_sizes;
         svector<const tuple_set*>& tail_facts = ctx.m_tail_facts;
         svector<expr*>& buffer = ctx.m_buffer;
         const unsigned utail_size = r->get_positive_tail_size();
-        //unsigned ncols = num_cols();
-        //unsigned nrows = num_rows();
-        //std::cout << "Deduce for " << r->get_decl()->get_name().bare_str() << "(" << m_num_cols << " cols, " << m_num_rows << " rows)" << std::endl;
         iter.resize(utail_size);
-        //sizes.resize(utail_size);
         tail_facts.resize(utail_size);
-        //buffer.reset();
-        //bool all_empty = true;
-        //unsigned sz = 1;
         unsigned max_vidx = 0;
         app* head = r->get_head();
         for (unsigned i = 0; i < head->get_num_args(); ++i) {
@@ -137,18 +63,7 @@ namespace datalog {
             app* el = r->get_tail(i);
             const tuple_set& fact = facts.get(i);
             tail_facts[i] = &fact;
-            //if (fact.m_num_rows != 0) {
-            //    sz *= fact.m_num_rows;
-            //}
             iter[i] = 0;
-            //if (sz == 0) {
-                //if (cols != 0) {
-                //    return false; // We are joining with an empty table
-                //}
-            //} else {
-            //    all_empty = false;
-            //}
-            //sizes[i] = sz;
             // Make the buffer large enough for all var indices
             for (unsigned j = 0; j < el->get_num_args(); ++j) {
                 expr* arg = el->get_arg(j);
@@ -161,16 +76,11 @@ namespace datalog {
             }
         }
         buffer.resize(max_vidx + 1, 0);
-        //std::cout << "Processing " << sz << " rows." << std::endl;
-        //if (all_empty)
-        //    return deduce_base_facts(ctx, r);
         bool new_facts = false;
         bool valid_iter = true;
         while(valid_iter) {
             bool feasible = true;
             buffer.fill(0);
-            // XXX: Urg...
-            //memset(buffer.c_ptr(), 0, buffer.size()*sizeof(expr*));
             for (unsigned i = 0; i < utail_size; ++i) {
                 app* el = r->get_tail(i);
                 const tuple_set* fact = tail_facts[i];
@@ -259,9 +169,6 @@ namespace datalog {
         SASSERT(m_tuples.size() == m_num_cols*m_num_rows);
         //std::cout << "Init for " << mk_pp(r->get_head(), ctx.m) << std::endl;
         svector<expr*>& buffer = ctx.m_buffer;
-        //unsigned ncols = m_indices.size();
-        //if (ncols == 0)
-        //    return true;
         buffer.resize(m_num_cols);
         unsigned i = 0;
         bool new_facts = false;
@@ -270,7 +177,6 @@ namespace datalog {
             expr* arg = r->get_head()->get_arg(idx);
             if (is_var(arg)) {
                 delete_column(i);
-                //--ncols;
                 remove_duplicates();
                 new_facts = true;
             } else {
@@ -323,6 +229,206 @@ namespace datalog {
         }
     }
 
+    void tuple_set::init_down(ctx_t& m, const rule_set& rules, fact_setter<tuple_set>& setter) {
+        const func_decl_set& outputs = rules.get_output_predicates();
+        for (func_decl_set::iterator I = outputs.begin(),
+            E = outputs.end(); I != E; ++I) {
+            func_decl* output = *I;
+            const rule_vector& output_rules = rules.get_predicate_rules(output);
+            for (rule_vector::const_iterator I2 = output_rules.begin(),
+                E2 = output_rules.end(); I2 != E2; ++I2) {
+                rule* output_rule = *I2;
+                tuple_set& head_fact = setter.get(output_rule->get_decl());
+                head_fact.m_num_cols = 0;
+                head_fact.m_indices.reset();
+                head_fact.has_tuples = true;
+                setter.set_changed(output_rule->get_decl());
+                m.m_buffer.reset();
+                distribute_query_fact(m, m.m_buffer, 0, output_rule, setter);
+            }
+        }
+    }
+
+    void tuple_set::distribute_query_facts(ctx_t& ctx, const rule* r, fact_setter<tuple_set>& setter) const {
+        const unsigned nrows = num_rows();
+        const unsigned ncols = num_cols();
+        app *head = r->get_head();
+        unsigned max_vidx = 0;
+        svector<expr*>& buffer = ctx.m_buffer;
+        for (unsigned i = 0; i < ncols; ++i) {
+            expr* arg = head->get_arg(m_indices[i]);
+            if (is_var(arg)) {
+                const unsigned vidx = to_var(arg)->get_idx();
+                if (max_vidx < vidx) {
+                    max_vidx = vidx;
+                }
+            }
+        }
+        if (nrows == 0 && ncols == 0) {
+            buffer.reset();
+            buffer.resize(max_vidx + 1);
+            distribute_query_fact(ctx, buffer, max_vidx + 1, r, setter);
+        } else {
+            for (unsigned i = 0; i < nrows; ++i) {
+                // Generate mapping
+                buffer.reset();
+                buffer.resize(max_vidx + 1);
+                bool feasible = true;
+                for (unsigned j = 0; j < ncols; ++j) {
+                    expr *arg = head->get_arg(m_indices[j]);
+                    if (is_var(arg)) {
+                        const unsigned vidx = to_var(arg)->get_idx();
+                        expr *cur_binding = buffer[vidx];
+                        expr *new_binding = m_tuples[i*ncols + j];
+                        if (cur_binding == 0) {
+                            buffer[vidx] = new_binding;
+                        } else {
+                            if (cur_binding != new_binding) {
+                                feasible = false;
+                                break;
+                            }
+                        }
+                    } else {
+                        if (m_tuples[i*ncols + j] != arg) {
+                            feasible = false;
+                            break;
+                        }
+                    }
+                }
+                if (feasible) {
+                    distribute_query_fact(ctx, buffer, max_vidx + 1, r, setter);
+                }
+            }
+        }
+    }
+
+    void tuple_set::distribute_query_fact(ctx_t& ctx, svector<expr*>& buffer, unsigned offs, const rule* r, fact_setter<tuple_set>& setter) {
+        bit_vector& bound_vars = ctx.m_seen;
+        bound_vars.reset();
+        for (unsigned i = 0; i < r->get_tail_size(); ++i) {
+            app *el = r->get_tail(i);
+            tuple_set& tail_fact = setter.get(el->get_decl());
+            unsigned ncols = tail_fact.num_cols();
+            buffer.resize(offs + ncols);
+            bool new_fact = false;
+            unsigned j = 0;
+            while (j < ncols) {
+                const unsigned arg_idx = tail_fact.m_indices[j];
+                expr *arg = el->get_arg(arg_idx);
+                if (is_var(arg)) {
+                    const unsigned vidx = to_var(arg)->get_idx();
+                    expr *var_binding = vidx < offs ? buffer[vidx] : 0;
+                    if (var_binding == 0) {
+                        // Variable is unbound, delete column
+                        tail_fact.delete_column(j);
+                        --ncols;
+                        new_fact = true;
+                    } else {
+                        buffer[offs + j] = var_binding;
+                        ++j;
+                        if (!r->is_neg_tail(i)) {
+                            if (bound_vars.size() <= vidx) {
+                                bound_vars.resize(vidx + 1);
+                            }
+                            bound_vars.set(vidx);
+                        }
+                    }
+                } else {
+                    buffer[offs + j] = arg;
+                    ++j;
+                }
+            }
+            if (tail_fact.insert_fact(ctx, buffer, offs)) {
+                tail_fact.prune(ctx);
+                new_fact = true;
+            }
+            if (new_fact) {
+                setter.set_changed(el->get_decl());
+            }
+        }
+    }
+
+    void tuple_set::intersect(ctx_t& ctx, const tuple_set& oth) {
+        if (oth.m_num_cols == 0) {
+            return;
+        }
+        if (m_num_cols == 0) {
+            m_indices = oth.m_indices;
+            m_tuples = oth.m_tuples;
+            m_num_cols = oth.m_num_cols;
+            m_num_rows = oth.m_num_rows;
+            return;
+        }
+        unsigned_vector& old_indices = ctx.m_iter;
+        svector<expr*>& old_tuples = ctx.m_buffer;
+        // Make a copy of the current data
+        old_indices = m_indices;
+        old_tuples = m_tuples;
+        const unsigned old_nrows = m_num_rows;
+        const unsigned old_ncols = m_num_cols;
+        // Merge the columns
+        m_indices.reset();
+        unsigned lidx = 0;
+        unsigned ridx = 0;
+        while (true) {
+            if (lidx >= old_indices.size()) {
+                while (ridx < oth.m_indices.size()) {
+                    m_indices.push_back(oth.m_indices[ridx++]);
+                }
+                break;
+            }
+            if (ridx >= oth.m_indices.size()) {
+                while (lidx < old_indices.size()) {
+                    m_indices.push_back(old_indices[lidx++]);
+                }
+                break;
+            }
+            if (old_indices[lidx] < oth.m_indices[ridx]) {
+                m_indices.push_back(old_indices[lidx++]);
+            } else if (old_indices[lidx] > oth.m_indices[ridx]) {
+                m_indices.push_back(oth.m_indices[ridx++]);
+            } else {
+                m_indices.push_back(old_indices[lidx++]);
+                ++ridx;
+            }
+        }
+        m_num_cols = m_indices.size();
+        // Merge the tuples
+        m_tuples.reset();
+        m_num_rows = 0;
+        for (unsigned i = 0; i < old_nrows; ++i) {
+            for (unsigned j = 0; j < oth.m_num_rows; ++j) {
+                m_tuples.resize((m_num_rows + 1)*m_num_cols);
+                // Write the left hand fact
+                for (unsigned col = 0; col < old_ncols; ++col) {
+                    expr *val = old_tuples[i*old_ncols + col];
+                    // Find the new column
+                    unsigned new_col;
+                    for (new_col = col; m_indices[new_col] != old_indices[col]; ++new_col);
+                    m_tuples[m_num_rows*m_num_cols + new_col] = val;
+                }
+                // Write the right hand fact and check for feasability
+                bool feasible = true;
+                for (unsigned col = 0; col < oth.m_num_cols; ++col) {
+                    expr *val = oth.m_tuples[j*oth.m_num_cols + col];
+                    // Find the new column
+                    unsigned new_col;
+                    for (new_col = col; m_indices[new_col] != oth.m_indices[col]; ++new_col);
+                    if (m_tuples[m_num_rows*m_num_cols + new_col] == 0) {
+                        m_tuples[m_num_rows*m_num_cols + new_col] = val;
+                    } else if (m_tuples[m_num_rows*m_num_cols + new_col] != val) {
+                        feasible = false;
+                        break;
+                    }
+                }
+                if (feasible) {
+                    ++m_num_rows;
+                }
+            }
+        }
+        m_tuples.resize(m_num_rows*m_num_cols);
+    }
+
     void tuple_set::dump(ctx_t& ctx, std::ostream& outp) const {
         const unsigned ncols = num_cols();
         const unsigned nrows = num_rows();
@@ -341,5 +447,19 @@ namespace datalog {
             }
             outp << std::endl;
         }
+    }
+
+    bool tuple_set::is_full(ctx_t& ctx, unsigned col) const {
+        sort* const* domain = m_symbol->get_domain();
+        const unsigned arg = m_indices[col];
+        sort* srt = domain[arg];
+        const sort_size& sz = srt->get_num_elements();
+        if (sz.is_infinite())
+            return false;
+        const unsigned count = count_unique_values(ctx, col);
+        if (count < sz.size())
+            return false;
+        else
+            return true;
     }
 }

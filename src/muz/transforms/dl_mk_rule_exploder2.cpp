@@ -1,24 +1,34 @@
 #include "dl_mk_rule_exploder2.h"
 #include "hashtable.h"
+#include "stopwatch.h"
 
 namespace datalog {
 
     mk_rule_exploder2::mk_rule_exploder2(context & ctx, unsigned threshold, unsigned priority)
         : plugin(priority), m_ctx(ctx), m_new_tail(ctx.get_manager()),
         m_new_args(ctx.get_manager()), m_subst(ctx.get_manager()),
-        m_simpl(ctx.get_manager()), m_threshold(threshold) {
+        m_simpl(ctx.get_manager()), m_threshold(threshold), m_cur_key(0) {
 
     }
 
     rule_set * mk_rule_exploder2::operator()(rule_set const & source) {
+        //stopwatch timer;
+        //timer.start();
         //std::cout << "Old rules:" << std::endl;
         //source.display(std::cout);
-        std::cout << std::endl << "Analysis:" << std::endl;
+        
         tuple_set_ctx ctx(source.get_manager(), m_threshold);
         dataflow_engine<tuple_set> engine(ctx, source);
         engine.run_bottom_up();
-        engine.dump(std::cout);
-        //std::cout << std::endl << "New rules:" << std::endl;
+        //std::cout << std::endl << "Bottom up:" << std::endl;
+        //engine.dump(std::cout);
+        dataflow_engine<tuple_set> engine_down(ctx, source);
+        engine_down.run_top_down();
+        //std::cout << std::endl << "Top down:" << std::endl;
+        //engine_down.dump(std::cout);
+        engine.intersect(engine_down);
+        //std::cout << std::endl << "Result:" << std::endl;
+        //engine.dump(std::cout);
         mapping_map mapping;
         rule_set* trg = alloc(rule_set, m_ctx);
         generate_mapping(engine, mapping, source, *trg);
@@ -26,8 +36,11 @@ namespace datalog {
             E = source.end(); I != E; ++I) {
             translate_rule(engine, mapping, *I, *trg);
         }
+        //std::cout << std::endl << "New rules:" << std::endl;
         //trg->display(std::cout);
         trg->close();
+        //std::cout << timer.get_current_seconds();
+        //exit(0);
         return trg;
     }
 
@@ -61,12 +74,13 @@ namespace datalog {
     }
 
     void mk_rule_exploder2::translate_rule(const dataflow_engine<tuple_set>& engine, const mapping_map& mappings, rule* r, rule_set& trg) {
-        const unsigned sz = r->get_uninterpreted_tail_size() + 1;
-        m_iters.resize(sz);
-        m_tail_facts.resize(sz);
-        m_tail_syms.resize(sz);
+        const unsigned psz = r->get_positive_tail_size();
+        const unsigned nsz = r->get_uninterpreted_tail_size();
+        m_iters.resize(psz+1);
+        m_tail_facts.resize(psz+1);
+        m_tail_syms.resize(psz+1);
         bool no_replacement = true;
-        for (unsigned i = 0; i < sz; ++i) {
+        for (unsigned i = 0; i <= psz; ++i) {
             func_decl* sym = i == 0 ? r->get_decl() : r->get_decl(i - 1);
             m_iters[i] = 0;
             m_tail_facts[i] = &engine.get_fact(sym);
@@ -86,22 +100,15 @@ namespace datalog {
                 // Generate variable bindings
                 bool feasible = true;
                 m_var_bindings.reset();
-                m_true.reset();
-                m_true.resize(sz);
-                for (unsigned i = 0; i < sz; ++i) {
+                for (unsigned i = 0; i <= psz; ++i) {
                     const vector<func_decl*>* repl = m_tail_syms[i];
                     if (repl != 0) {
                         const tuple_set* fact = m_tail_facts[i];
                         const unsigned num = m_iters[i];
                         app* elem = i == 0 ? r->get_head() : r->get_tail(i - 1);
-                        bool is_neg = i == 0 ? false : r->is_neg_tail(i - 1);
                         if (fact->num_rows() == 0 && fact->num_cols() != 0) {
-                            if (is_neg) {
-                                m_true.set(i);
-                            } else {
-                                feasible = false;
-                                break;
-                            }
+                            feasible = false;
+                            break;
                         }
                         for (unsigned j = 0; j < fact->num_cols(); ++j) {
                             const unsigned arg_idx = fact->get_columns()[j];
@@ -115,20 +122,12 @@ namespace datalog {
                                 } else if (m_var_bindings[vidx] == 0) {
                                     m_var_bindings[vidx] = inst;
                                 } else if (m_var_bindings[vidx] != inst) {
-                                    if (is_neg) {
-                                        m_true.set(i);
-                                    } else {
-                                        feasible = false;
-                                        break;
-                                    }
-                                }
-                            } else if (arg != inst) {
-                                if (is_neg) {
-                                    m_true.set(i);
-                                } else {
                                     feasible = false;
                                     break;
                                 }
+                            } else if (arg != inst) {
+                                feasible = false;
+                                break;
                             }
                         }
                         if (!feasible) {
@@ -144,9 +143,8 @@ namespace datalog {
                     expr_ref result(m_ctx.get_manager());
                     proof_ref pr(m_ctx.get_manager());
                     app *new_head;
-                    for (unsigned i = 0; i < sz; ++i) {
-                        if (m_true.get(i))
-                            continue;
+                    // Transform the positive tail
+                    for (unsigned i = 0; i <= psz; ++i) {
                         const unsigned num = m_iters[i];
                         const tuple_set* fact = m_tail_facts[i];
                         const vector<func_decl*>* repl = m_tail_syms[i];
@@ -181,7 +179,29 @@ namespace datalog {
                             new_head = nelem;
                         } else {
                             m_new_tail.push_back(nelem);
-                            m_new_tail_neg.push_back(r->is_neg_tail(i - 1));
+                            m_new_tail_neg.push_back(false);
+                        }
+                    }
+                    // Transform the negative tail
+                    for (unsigned i = psz; i < nsz; ++i) {
+                        app* elem = r->get_tail(i);
+                        m_new_args.reset();
+                        bool mk_new = false;
+                        for (unsigned j = 0; j < elem->get_num_args(); ++j) {
+                            expr* arg = elem->get_arg(j);
+                            result = 0;
+                            m_subst(arg, result);
+                            if (result.get() != 0) {
+                                m_new_args.push_back(result.get());
+                                mk_new = true;
+                            } else {
+                                m_new_args.push_back(arg);
+                            }
+                        }
+                        app* repl = get_negation_replacement(elem->get_decl(), m_new_args, engine, mappings, trg);
+                        if (repl != 0) {
+                            m_new_tail.push_back(repl);
+                            m_new_tail_neg.push_back(true);
                         }
                     }
                     // Transform the interpreted tail
@@ -230,7 +250,7 @@ namespace datalog {
                     }
                 }
                 valid_iter = false;
-                for (unsigned i = 0; i < m_iters.size(); ++i) {
+                for (unsigned i = 0; i <= psz; ++i) {
                     if (++m_iters[i] >= m_tail_facts[i]->num_rows()) {
                         m_iters[i] = 0;
                     } else {
@@ -240,5 +260,125 @@ namespace datalog {
                 }
             }
         }
+    }
+
+    app* mk_rule_exploder2::get_negation_replacement(func_decl* sym, expr_ref_vector& inst, const dataflow_engine<tuple_set>& engine, const mapping_map& mappings, rule_set& trg) {
+        const tuple_set& fact = engine.get_fact(sym);
+        if (fact.num_cols() == 0) {
+            return m_ctx.get_manager().mk_app(sym, inst.size(), inst.c_ptr());
+        }
+        // Are all parameters determined?
+        bool all_determined = true;
+        for (unsigned col = 0; col < fact.num_cols(); ++col) {
+            if (is_var(inst.get(fact.get_columns()[col]))) {
+                all_determined = false;
+                break;
+            }
+        }
+        if (all_determined) {
+            // Find the matching row
+            for (unsigned row = 0; row < fact.num_rows(); ++row) {
+                bool matches = true;
+                for (unsigned col = 0; col < fact.num_cols(); ++col) {
+                    if (fact.get_tuples()[row*fact.num_cols() + col] != inst.get(fact.get_columns()[col])) {
+                        matches = false;
+                        break;
+                    }
+                }
+                if (matches) {
+                    const vector<func_decl*>& repls = mappings.find(sym);
+                    // Fix the arguments
+                    for (unsigned col = 0; col < fact.num_cols(); ++col) {
+                        inst.erase(fact.get_columns()[col] - col);
+                    }
+                    return m_ctx.get_manager().mk_app(repls[row], inst.size(), inst.c_ptr());
+                }
+            }
+            // No row matches, the predicate is false
+            return 0;
+        }
+        if (m_cur_key == 0) {
+            m_cur_key = alloc(negation_repl_key, m_ctx.get_manager());
+        }
+        m_cur_key->m_symbol = sym;
+        m_cur_key->m_inst.resize(fact.num_cols());
+        for (unsigned i = 0; i < fact.num_cols(); ++i) {
+            expr* arg = inst.get(fact.get_columns()[i]);
+            if (is_var(arg)) {
+                m_cur_key->m_inst[i] = 0;
+            } else {
+                m_cur_key->m_inst[i] = arg;
+            }
+        }
+        func_decl* result;
+        if (!m_negation_repl.find(m_cur_key, result)) {
+            const vector<func_decl*>& repls = mappings.find(sym);
+            vector<sort*> domain;
+            vector<sort*> var_domain;
+            unsigned col = 0;
+            for (unsigned i = 0; i < sym->get_arity(); ++i) {
+                if (col < fact.num_cols() && fact.get_columns()[col] == i) {
+                    if (is_var(inst.get(i))) {
+                        domain.push_back(sym->get_domain(i));
+                    }
+                    ++col;
+                } else {
+                    domain.push_back(sym->get_domain(i));
+                    var_domain.push_back(sym->get_domain(i));
+                }
+            }
+            // Create the replacement symbol
+            result = m_ctx.mk_fresh_head_predicate(sym->get_name(), symbol("neg"), domain.size(), domain.c_ptr(), sym);
+            vector<expr*> vars;
+            vars.resize(var_domain.size());
+            // Create the free variables
+            for (unsigned i = 0; i < var_domain.size(); ++i) {
+                vars[i] = m_ctx.get_manager().mk_var(i, var_domain[i]);
+            }
+            // Create the rules
+            vector<expr*> head_args;
+            vector<expr*> body_args;
+            for (unsigned i = 0; i < fact.num_rows(); ++i) {
+                // Check if the fact is compatible with the instantiation
+                unsigned col = 0;
+                unsigned vidx = 0;
+                bool compatible = true;
+                for (unsigned j = 0; j < sym->get_arity(); ++j) {
+                    if (col < fact.num_cols() && fact.get_columns()[col] == j) {
+                        if (is_var(inst.get(j))) {
+                            head_args.push_back(fact.get_tuples()[i*fact.num_cols() + col]);
+                        } else if (inst.get(j) != fact.get_tuples()[i*fact.num_cols() + col]) {
+                            compatible = false;
+                            break;
+                        }
+                        ++col;
+                    } else {
+                        head_args.push_back(vars[vidx]);
+                        body_args.push_back(vars[vidx]);
+                        ++vidx;
+                    }
+                }
+                if (compatible) {
+                    app* head = m_ctx.get_manager().mk_app(result, head_args.size(), head_args.c_ptr());
+                    app* body = m_ctx.get_manager().mk_app(repls[i], body_args.size(), body_args.c_ptr());
+                    rule* nrule = m_ctx.get_rule_manager().mk(head, 1, &body);
+                    trg.add_rule(nrule);
+                }
+                head_args.reset();
+                body_args.reset();
+            }
+            m_negation_repl.insert(m_cur_key, result);
+            m_cur_key = 0;
+        }
+        // Fit the arguments
+        unsigned offset = 0;
+        for (unsigned col = 0; col < fact.num_cols(); ++col) {
+            const unsigned idx = fact.get_columns()[col];
+            if (!is_var(inst.get(idx - offset))) {
+                inst.erase(idx - offset);
+                ++offset;
+            }
+        }
+        return m_ctx.get_manager().mk_app(result, inst.size(), inst.c_ptr());
     }
 }
