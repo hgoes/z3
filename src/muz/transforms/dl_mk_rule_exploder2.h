@@ -6,6 +6,7 @@
 #include "simplifier.h"
 #include "tuple_set.h"
 #include "bit_vector.h"
+#include "for_each_expr.h"
 
 namespace datalog {
 
@@ -19,9 +20,48 @@ namespace datalog {
         svector<bool> m_new_tail_neg;
         expr_ref_vector m_new_args;
         vector<expr*> m_var_bindings;
+        vector<sort*> m_var_sorts;
         beta_reducer m_subst;
         simplifier m_simpl;
         unsigned m_threshold;
+        uint_set m_bound_vars;
+        uint_set m_exluded_tails;
+        struct contains_bound_var {
+            bool m_contains_bound_var;
+            vector<var*> m_unbound_vars;
+            uint_set& m_bound_vars;
+            expr_fast_mark1 m_visited;
+            contains_bound_var(uint_set& bound_vars) : m_contains_bound_var(false), m_bound_vars(bound_vars) {}
+            void process(expr *e) {
+                for_each_expr_core<contains_bound_var, expr_fast_mark1, false, true>(*this, m_visited, e);
+                m_visited.reset();
+            }
+            void reset() {
+                m_contains_bound_var = false;
+                m_unbound_vars.reset();
+            }
+            // Visitor interface. Do not call directly!
+            void operator()(var* e) {
+                if (m_contains_bound_var)
+                    return;
+                const unsigned vidx = e->get_idx();
+                if (m_bound_vars.contains(vidx)) {
+                    m_contains_bound_var = true;
+                } else {
+                    for (unsigned i = 0; i < m_unbound_vars.size(); ++i) {
+                        if (m_unbound_vars[i] == e)
+                            return;
+                    }
+                    m_unbound_vars.push_back(e);
+                }
+            }
+
+            // Visitor interface. Do not call directly!
+            void operator()(app* e) const {}
+            // Visitor interface. Do not call directly!
+            void operator()(quantifier* e) const {}
+        };
+        contains_bound_var m_contains_bound_var;
         struct negation_repl_key {
             func_decl* m_symbol;
             vector<expr*> m_inst;

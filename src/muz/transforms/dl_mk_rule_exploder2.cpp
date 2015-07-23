@@ -7,7 +7,7 @@ namespace datalog {
     mk_rule_exploder2::mk_rule_exploder2(context & ctx, unsigned threshold, unsigned priority)
         : plugin(priority), m_ctx(ctx), m_new_tail(ctx.get_manager()),
         m_new_args(ctx.get_manager()), m_subst(ctx.get_manager()),
-        m_simpl(ctx.get_manager()), m_threshold(threshold), m_cur_key(0) {
+        m_simpl(ctx.get_manager()), m_threshold(threshold), m_contains_bound_var(m_bound_vars), m_cur_key(0) {
 
     }
 
@@ -79,15 +79,25 @@ namespace datalog {
         m_iters.resize(psz+1);
         m_tail_facts.resize(psz+1);
         m_tail_syms.resize(psz+1);
+        m_bound_vars.reset();
         bool no_replacement = true;
         for (unsigned i = 0; i <= psz; ++i) {
-            func_decl* sym = i == 0 ? r->get_decl() : r->get_decl(i - 1);
+            app *elem = i == 0 ? r->get_head() : r->get_tail(i - 1);
+            func_decl *sym = elem->get_decl();
             m_iters[i] = 0;
-            m_tail_facts[i] = &engine.get_fact(sym);
+            const tuple_set& fact = engine.get_fact(sym);
+            m_tail_facts[i] = &fact;
             mapping_map::entry* entr = mappings.find_core(sym);
             if (entr) {
                 m_tail_syms[i] = &entr->get_data().m_value;
                 no_replacement = false;
+                for (unsigned col = 0; col < fact.num_cols(); ++col)  {
+                    const unsigned idx = fact.get_columns()[col];
+                    expr *arg = elem->get_arg(idx);
+                    if (is_var(arg)) {
+                        m_bound_vars.insert(to_var(arg)->get_idx());
+                    }
+                }
             } else {
                 m_tail_syms[i] = 0;
             }
@@ -95,6 +105,65 @@ namespace datalog {
         if (no_replacement) {
             trg.add_rule(r);
         } else {
+            // Construct the common part of all fragments
+            m_exluded_tails.reset();
+            m_new_tail.reset();
+            m_new_tail_neg.reset();
+            // Holds the variables for the predicate
+            m_var_bindings.reset();
+            m_var_sorts.reset();
+            for (unsigned i = 0; i < r->get_tail_size(); ++i) {
+                if (i < psz && m_tail_syms[i+1]) {
+                    continue;
+                }
+                app *elem = r->get_tail(i);
+                m_contains_bound_var.reset();
+                m_contains_bound_var.process(elem);
+                if (!m_contains_bound_var.m_contains_bound_var) {
+                    m_exluded_tails.insert(i);
+                    m_new_tail.push_back(elem);
+                    m_new_tail_neg.push_back(r->is_neg_tail(i));
+                    // Add variables to the arguments
+                    const unsigned sz = m_contains_bound_var.m_unbound_vars.size();
+                    for (unsigned j = 0; j < sz; ++j) {
+                        var *cur_var = m_contains_bound_var.m_unbound_vars[j];
+                        bool not_in = true;
+                        for (unsigned k = 0; k < m_var_bindings.size(); ++k) {
+                            if (m_var_bindings[k] == cur_var) {
+                                not_in = false;
+                                break;
+                            }
+                        }
+                        if (not_in) {
+                            m_var_bindings.push_back(cur_var);
+                            m_var_sorts.push_back(m_ctx.get_manager().get_sort(cur_var));
+                        }
+                    }
+                    for (unsigned j = 0; j < elem->get_num_args(); ++j) {
+                        expr *arg = elem->get_arg(j);
+                        if (is_var(arg)) {
+                            bool not_in = true;
+                            for (unsigned k = 0; k < m_var_bindings.size(); ++k) {
+                                if (m_var_bindings[k] == arg) {
+                                    not_in = false;
+                                    break;
+                                }
+                            }
+                            if (not_in) {
+                                m_var_bindings.push_back(arg);
+                                m_var_sorts.push_back(elem->get_decl()->get_domain(j));
+                            }
+                        }
+                    }
+                }
+            }
+            app_ref common_tail(m_ctx.get_manager());
+            if (!m_new_tail.empty()) {
+                func_decl *common_tail_sym = m_ctx.mk_fresh_head_predicate(r->get_decl()->get_name(), symbol("common"), m_var_bindings.size(), m_var_sorts.c_ptr());
+                common_tail = m_ctx.get_manager().mk_app(common_tail_sym, m_var_bindings.size(), m_var_bindings.c_ptr());
+                rule *common_tail_rule = m_ctx.get_rule_manager().mk(common_tail, m_new_tail.size(), m_new_tail.c_ptr(), m_new_tail_neg.c_ptr());
+                trg.add_rule(common_tail_rule);
+            }
             bool valid_iter = true;
             while (valid_iter) {
                 // Generate variable bindings
@@ -143,8 +212,14 @@ namespace datalog {
                     expr_ref result(m_ctx.get_manager());
                     proof_ref pr(m_ctx.get_manager());
                     app *new_head;
+                    if (common_tail.get()) {
+                        m_new_tail.push_back(common_tail.get());
+                        m_new_tail_neg.push_back(false);
+                    }
                     // Transform the positive tail
                     for (unsigned i = 0; i <= psz; ++i) {
+                        if (i != 0 && m_exluded_tails.contains(i - 1))
+                            continue;
                         const unsigned num = m_iters[i];
                         const tuple_set* fact = m_tail_facts[i];
                         const vector<func_decl*>* repl = m_tail_syms[i];
@@ -184,6 +259,8 @@ namespace datalog {
                     }
                     // Transform the negative tail
                     for (unsigned i = psz; i < nsz; ++i) {
+                        if (m_exluded_tails.contains(i))
+                            continue;
                         app* elem = r->get_tail(i);
                         m_new_args.reset();
                         bool mk_new = false;
@@ -206,6 +283,8 @@ namespace datalog {
                     }
                     // Transform the interpreted tail
                     for (unsigned i = r->get_uninterpreted_tail_size(); i < r->get_tail_size(); ++i) {
+                        if (m_exluded_tails.contains(i))
+                            continue;
                         app *elem = r->get_tail(i);
                         m_new_args.reset();
                         for (unsigned j = 0; j < elem->get_num_args(); ++j) {
