@@ -508,9 +508,9 @@ namespace datalog {
         if(c1.size()!=c2.size()) {
             return false;
         }
-        typename T::data * it1 = c1.c_ptr();
-        typename T::data * end1 = c1.c_ptr()+c1.size();
-        typename U::data * it2 = c2.c_ptr();
+        const typename T::data * it1 = c1.c_ptr();
+        const typename T::data * end1 = c1.c_ptr()+c1.size();
+        const typename U::data * it2 = c2.c_ptr();
         for(; it1!=end1; ++it1, ++it2) {
             if(*it1!=*it2) { 
                 return false;
