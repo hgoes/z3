@@ -105,64 +105,66 @@ namespace datalog {
         if (no_replacement) {
             trg.add_rule(r);
         } else {
-            // Construct the common part of all fragments
-            m_exluded_tails.reset();
-            m_new_tail.reset();
-            m_new_tail_neg.reset();
-            // Holds the variables for the predicate
-            m_var_bindings.reset();
-            m_var_sorts.reset();
-            for (unsigned i = 0; i < r->get_tail_size(); ++i) {
-                if (i < psz && m_tail_syms[i+1]) {
-                    continue;
-                }
-                app *elem = r->get_tail(i);
-                m_contains_bound_var.reset();
-                m_contains_bound_var.process(elem);
-                if (!m_contains_bound_var.m_contains_bound_var) {
-                    m_exluded_tails.insert(i);
-                    m_new_tail.push_back(elem);
-                    m_new_tail_neg.push_back(r->is_neg_tail(i));
-                    // Add variables to the arguments
-                    const unsigned sz = m_contains_bound_var.m_unbound_vars.size();
-                    for (unsigned j = 0; j < sz; ++j) {
-                        var *cur_var = m_contains_bound_var.m_unbound_vars[j];
-                        bool not_in = true;
-                        for (unsigned k = 0; k < m_var_bindings.size(); ++k) {
-                            if (m_var_bindings[k] == cur_var) {
-                                not_in = false;
-                                break;
-                            }
-                        }
-                        if (not_in) {
-                            m_var_bindings.push_back(cur_var);
-                            m_var_sorts.push_back(m_ctx.get_manager().get_sort(cur_var));
-                        }
+            app_ref common_tail(m_ctx.get_manager());
+            if (m_threshold > 1) {
+                // Construct the common part of all fragments
+                m_exluded_tails.reset();
+                m_new_tail.reset();
+                m_new_tail_neg.reset();
+                // Holds the variables for the predicate
+                m_var_bindings.reset();
+                m_var_sorts.reset();
+                for (unsigned i = 0; i < r->get_tail_size(); ++i) {
+                    if (i < psz && m_tail_syms[i + 1]) {
+                        continue;
                     }
-                    for (unsigned j = 0; j < elem->get_num_args(); ++j) {
-                        expr *arg = elem->get_arg(j);
-                        if (is_var(arg)) {
+                    app *elem = r->get_tail(i);
+                    m_contains_bound_var.reset();
+                    m_contains_bound_var.process(elem);
+                    if (!m_contains_bound_var.m_contains_bound_var) {
+                        m_exluded_tails.insert(i);
+                        m_new_tail.push_back(elem);
+                        m_new_tail_neg.push_back(r->is_neg_tail(i));
+                        // Add variables to the arguments
+                        const unsigned sz = m_contains_bound_var.m_unbound_vars.size();
+                        for (unsigned j = 0; j < sz; ++j) {
+                            var *cur_var = m_contains_bound_var.m_unbound_vars[j];
                             bool not_in = true;
                             for (unsigned k = 0; k < m_var_bindings.size(); ++k) {
-                                if (m_var_bindings[k] == arg) {
+                                if (m_var_bindings[k] == cur_var) {
                                     not_in = false;
                                     break;
                                 }
                             }
                             if (not_in) {
-                                m_var_bindings.push_back(arg);
-                                m_var_sorts.push_back(elem->get_decl()->get_domain(j));
+                                m_var_bindings.push_back(cur_var);
+                                m_var_sorts.push_back(m_ctx.get_manager().get_sort(cur_var));
+                            }
+                        }
+                        for (unsigned j = 0; j < elem->get_num_args(); ++j) {
+                            expr *arg = elem->get_arg(j);
+                            if (is_var(arg)) {
+                                bool not_in = true;
+                                for (unsigned k = 0; k < m_var_bindings.size(); ++k) {
+                                    if (m_var_bindings[k] == arg) {
+                                        not_in = false;
+                                        break;
+                                    }
+                                }
+                                if (not_in) {
+                                    m_var_bindings.push_back(arg);
+                                    m_var_sorts.push_back(elem->get_decl()->get_domain(j));
+                                }
                             }
                         }
                     }
                 }
-            }
-            app_ref common_tail(m_ctx.get_manager());
-            if (!m_new_tail.empty()) {
-                func_decl *common_tail_sym = m_ctx.mk_fresh_head_predicate(r->get_decl()->get_name(), symbol("common"), m_var_bindings.size(), m_var_sorts.c_ptr());
-                common_tail = m_ctx.get_manager().mk_app(common_tail_sym, m_var_bindings.size(), m_var_bindings.c_ptr());
-                rule *common_tail_rule = m_ctx.get_rule_manager().mk(common_tail, m_new_tail.size(), m_new_tail.c_ptr(), m_new_tail_neg.c_ptr());
-                trg.add_rule(common_tail_rule);
+                if (!m_new_tail.empty()) {
+                    func_decl *common_tail_sym = m_ctx.mk_fresh_head_predicate(r->get_decl()->get_name(), symbol("common"), m_var_bindings.size(), m_var_sorts.c_ptr());
+                    common_tail = m_ctx.get_manager().mk_app(common_tail_sym, m_var_bindings.size(), m_var_bindings.c_ptr());
+                    rule *common_tail_rule = m_ctx.get_rule_manager().mk(common_tail, m_new_tail.size(), m_new_tail.c_ptr(), m_new_tail_neg.c_ptr());
+                    trg.add_rule(common_tail_rule);
+                }
             }
             bool valid_iter = true;
             while (valid_iter) {
@@ -389,8 +391,10 @@ namespace datalog {
                 m_cur_key->m_inst[i] = arg;
             }
         }
-        func_decl* result;
-        if (!m_negation_repl.find(m_cur_key, result)) {
+        m_cur_key->m_hash_cache = 0;
+        obj_map<negation_repl_key, func_decl*>::obj_map_entry* entry = m_negation_repl.insert_if_not_there2(m_cur_key, 0);
+        func_decl* &result = entry->get_data().m_value;
+        if (result == 0) {
             const vector<func_decl*>& repls = mappings.find(sym);
             vector<sort*> domain;
             vector<sort*> var_domain;
@@ -446,7 +450,6 @@ namespace datalog {
                 head_args.reset();
                 body_args.reset();
             }
-            m_negation_repl.insert(m_cur_key, result);
             m_cur_key = 0;
         }
         // Fit the arguments

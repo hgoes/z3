@@ -65,14 +65,20 @@ namespace datalog {
         struct negation_repl_key {
             func_decl* m_symbol;
             vector<expr*> m_inst;
-            negation_repl_key(ast_manager& m) {}
-            unsigned hash() const {
+            unsigned m_hash_cache;
+            negation_repl_key(ast_manager& m) : m_hash_cache(0) {}
+            unsigned hash() {
+                if (m_hash_cache != 0)
+                    return m_hash_cache;
                 unsigned r = m_symbol->hash();
                 for (unsigned i = 0; i < m_inst.size(); ++i) {
                     if (m_inst.get(i)) {
-                        r ^= m_inst.get(i)->hash();
+                        r = combine_hash(r, m_inst.get(i)->hash());
+                    } else {
+                        r = combine_hash(r, hash_u(i));
                     }
                 }
+                m_hash_cache = r;
                 return r;
             }
             bool operator==(const negation_repl_key & o) const {
