@@ -1,6 +1,5 @@
 #include "dl_mk_rule_exploder2.h"
 #include "hashtable.h"
-#include "stopwatch.h"
 
 namespace datalog {
 
@@ -8,27 +7,15 @@ namespace datalog {
         : plugin(priority), m_ctx(ctx), m_new_tail(ctx.get_manager()),
         m_new_args(ctx.get_manager()), m_subst(ctx.get_manager()),
         m_simpl(ctx.get_manager()), m_threshold(threshold), m_contains_bound_var(m_bound_vars), m_cur_key(0) {
-
     }
 
     rule_set * mk_rule_exploder2::operator()(rule_set const & source) {
-        //stopwatch timer;
-        //timer.start();
-        //std::cout << "Old rules:" << std::endl;
-        //source.display(std::cout);
-        
         tuple_set_ctx ctx(source.get_manager(), m_threshold);
         dataflow_engine<tuple_set> engine(ctx, source);
         engine.run_bottom_up();
-        //std::cout << std::endl << "Bottom up:" << std::endl;
-        //engine.dump(std::cout);
         dataflow_engine<tuple_set> engine_down(ctx, source);
         engine_down.run_top_down();
-        //std::cout << std::endl << "Top down:" << std::endl;
-        //engine_down.dump(std::cout);
         engine.intersect(engine_down);
-        //std::cout << std::endl << "Result:" << std::endl;
-        //engine.dump(std::cout);
         mapping_map mapping;
         rule_set* trg = alloc(rule_set, m_ctx);
         generate_mapping(engine, mapping, source, *trg);
@@ -36,11 +23,6 @@ namespace datalog {
             E = source.end(); I != E; ++I) {
             translate_rule(engine, mapping, *I, *trg);
         }
-        //std::cout << std::endl << "New rules:" << std::endl;
-        //trg->display(std::cout);
-        trg->close();
-        //std::cout << timer.get_current_seconds();
-        //exit(0);
         return trg;
     }
 
@@ -76,9 +58,9 @@ namespace datalog {
     void mk_rule_exploder2::translate_rule(const dataflow_engine<tuple_set>& engine, const mapping_map& mappings, rule* r, rule_set& trg) {
         const unsigned psz = r->get_positive_tail_size();
         const unsigned nsz = r->get_uninterpreted_tail_size();
-        m_iters.resize(psz+1);
-        m_tail_facts.resize(psz+1);
-        m_tail_syms.resize(psz+1);
+        m_iters.resize(psz + 1);
+        m_tail_facts.resize(psz + 1);
+        m_tail_syms.resize(psz + 1);
         m_bound_vars.reset();
         bool no_replacement = true;
         for (unsigned i = 0; i <= psz; ++i) {
@@ -106,65 +88,12 @@ namespace datalog {
             trg.add_rule(r);
         } else {
             app_ref common_tail(m_ctx.get_manager());
+            m_exluded_tails.reset();
+            rule* common_tail_rule;
             if (m_threshold > 1) {
-                // Construct the common part of all fragments
-                m_exluded_tails.reset();
-                m_new_tail.reset();
-                m_new_tail_neg.reset();
-                // Holds the variables for the predicate
-                m_var_bindings.reset();
-                m_var_sorts.reset();
-                for (unsigned i = 0; i < r->get_tail_size(); ++i) {
-                    if (i < psz && m_tail_syms[i + 1]) {
-                        continue;
-                    }
-                    app *elem = r->get_tail(i);
-                    m_contains_bound_var.reset();
-                    m_contains_bound_var.process(elem);
-                    if (!m_contains_bound_var.m_contains_bound_var) {
-                        m_exluded_tails.insert(i);
-                        m_new_tail.push_back(elem);
-                        m_new_tail_neg.push_back(r->is_neg_tail(i));
-                        // Add variables to the arguments
-                        const unsigned sz = m_contains_bound_var.m_unbound_vars.size();
-                        for (unsigned j = 0; j < sz; ++j) {
-                            var *cur_var = m_contains_bound_var.m_unbound_vars[j];
-                            bool not_in = true;
-                            for (unsigned k = 0; k < m_var_bindings.size(); ++k) {
-                                if (m_var_bindings[k] == cur_var) {
-                                    not_in = false;
-                                    break;
-                                }
-                            }
-                            if (not_in) {
-                                m_var_bindings.push_back(cur_var);
-                                m_var_sorts.push_back(m_ctx.get_manager().get_sort(cur_var));
-                            }
-                        }
-                        for (unsigned j = 0; j < elem->get_num_args(); ++j) {
-                            expr *arg = elem->get_arg(j);
-                            if (is_var(arg)) {
-                                bool not_in = true;
-                                for (unsigned k = 0; k < m_var_bindings.size(); ++k) {
-                                    if (m_var_bindings[k] == arg) {
-                                        not_in = false;
-                                        break;
-                                    }
-                                }
-                                if (not_in) {
-                                    m_var_bindings.push_back(arg);
-                                    m_var_sorts.push_back(elem->get_decl()->get_domain(j));
-                                }
-                            }
-                        }
-                    }
-                }
-                if (!m_new_tail.empty()) {
-                    func_decl *common_tail_sym = m_ctx.mk_fresh_head_predicate(r->get_decl()->get_name(), symbol("common"), m_var_bindings.size(), m_var_sorts.c_ptr());
-                    common_tail = m_ctx.get_manager().mk_app(common_tail_sym, m_var_bindings.size(), m_var_bindings.c_ptr());
-                    rule *common_tail_rule = m_ctx.get_rule_manager().mk(common_tail, m_new_tail.size(), m_new_tail.c_ptr(), m_new_tail_neg.c_ptr());
-                    trg.add_rule(common_tail_rule);
-                }
+                common_tail_rule = create_common_tail(r, common_tail);
+            } else {
+                common_tail_rule = 0;
             }
             bool valid_iter = true;
             while (valid_iter) {
@@ -249,7 +178,7 @@ namespace datalog {
                             nelem = m_ctx.get_manager().mk_app((*repl)[num], m_new_args.size(), m_new_args.c_ptr());
                         } else if (mk_new) {
                             nelem = m_ctx.get_manager().mk_app(elem->get_decl(), m_new_args.size(), m_new_args.c_ptr());
-                        }  else {
+                        } else {
                             nelem = elem;
                         }
                         if (i == 0) {
@@ -284,48 +213,40 @@ namespace datalog {
                         }
                     }
                     // Transform the interpreted tail
+                    proof_ref proof(m_ctx.get_manager());
                     for (unsigned i = r->get_uninterpreted_tail_size(); i < r->get_tail_size(); ++i) {
                         if (m_exluded_tails.contains(i))
                             continue;
                         app *elem = r->get_tail(i);
-                        m_new_args.reset();
-                        for (unsigned j = 0; j < elem->get_num_args(); ++j) {
-                            expr* arg = elem->get_arg(j);
-                            result = 0;
-                            m_subst(arg, result);
-                            if (result.get() == 0) {
-                                m_new_args.push_back(arg);
-                            } else {
-                                m_new_args.push_back(result.get());
-                            }
-                        }
-                        result = 0;
-                        m_simpl.reset();
-                        m_simpl.mk_app(elem->get_decl(), m_new_args.size(), m_new_args.c_ptr(), result);
-                        expr *nelem = result.get();
-                        if (nelem == 0) {
-                            m_new_tail.push_back(elem);
-                            m_new_tail_neg.push_back(r->is_neg_tail(i));
-                        } else if (m_ctx.get_manager().is_false(nelem)) {
+                        m_subst(elem, result);
+                        m_ctx.get_rewriter()(result);
+                        if (m_ctx.get_manager().is_false(result)) {
                             //std::cout << "Simplified " << mk_pp(elem, m_ctx.get_manager()) << " to false." << std::endl;
                             if (!r->is_neg_tail(i)) {
                                 feasible = false;
                                 break;
                             }
-                        } else if (m_ctx.get_manager().is_true(nelem)) {
+                        } else if (m_ctx.get_manager().is_true(result)) {
                             //std::cout << "Simplified " << mk_pp(elem, m_ctx.get_manager()) << " to true." << std::endl;
                             if (r->is_neg_tail(i)) {
                                 feasible = false;
                                 break;
                             }
                         } else {
-                            SASSERT(is_app(nelem));
-                            //std::cout << "Simplified " << mk_pp(elem, m_ctx.get_manager()) << " to " << mk_pp(nelem,m_ctx.get_manager()) << "." << std::endl;
-                            m_new_tail.push_back(to_app(nelem));
+                            SASSERT(is_app(result));
+                            /*if (nelem != elem) {
+                                std::cout << "Simplified " << mk_pp(elem, m_ctx.get_manager()) << " to " << mk_pp(nelem, m_ctx.get_manager()) << "." << std::endl;
+                            }*/
+                            m_new_tail.push_back(to_app(result));
                             m_new_tail_neg.push_back(r->is_neg_tail(i));
                         }
                     }
                     if (feasible) {
+                        if (common_tail_rule) {
+                            trg.add_rule(common_tail_rule);
+                            // Only add once
+                            common_tail_rule = 0;
+                        }
                         rule* nrule = m_ctx.get_rule_manager().mk(new_head, m_new_tail.size(), m_new_tail.c_ptr(), m_new_tail_neg.c_ptr());
                         trg.add_rule(nrule);
                     }
@@ -462,5 +383,65 @@ namespace datalog {
             }
         }
         return m_ctx.get_manager().mk_app(result, inst.size(), inst.c_ptr());
+    }
+    rule* mk_rule_exploder2::create_common_tail(const rule* r, app_ref& common_tail) {
+        // Construct the common part of all fragments
+        m_new_tail.reset();
+        m_new_tail_neg.reset();
+        // Holds the variables for the predicate
+        m_var_bindings.reset();
+        m_var_sorts.reset();
+        for (unsigned i = 0; i < r->get_tail_size(); ++i) {
+            if (i < r->get_positive_tail_size() && m_tail_syms[i + 1]) {
+                continue;
+            }
+            app *elem = r->get_tail(i);
+            m_contains_bound_var.reset();
+            m_contains_bound_var.process(elem);
+            if (!m_contains_bound_var.m_contains_bound_var) {
+                m_exluded_tails.insert(i);
+                m_new_tail.push_back(elem);
+                m_new_tail_neg.push_back(r->is_neg_tail(i));
+                // Add variables to the arguments
+                const unsigned sz = m_contains_bound_var.m_unbound_vars.size();
+                for (unsigned j = 0; j < sz; ++j) {
+                    var *cur_var = m_contains_bound_var.m_unbound_vars[j];
+                    bool not_in = true;
+                    for (unsigned k = 0; k < m_var_bindings.size(); ++k) {
+                        if (m_var_bindings[k] == cur_var) {
+                            not_in = false;
+                            break;
+                        }
+                    }
+                    if (not_in) {
+                        m_var_bindings.push_back(cur_var);
+                        m_var_sorts.push_back(m_ctx.get_manager().get_sort(cur_var));
+                    }
+                }
+                for (unsigned j = 0; j < elem->get_num_args(); ++j) {
+                    expr *arg = elem->get_arg(j);
+                    if (is_var(arg)) {
+                        bool not_in = true;
+                        for (unsigned k = 0; k < m_var_bindings.size(); ++k) {
+                            if (m_var_bindings[k] == arg) {
+                                not_in = false;
+                                break;
+                            }
+                        }
+                        if (not_in) {
+                            m_var_bindings.push_back(arg);
+                            m_var_sorts.push_back(elem->get_decl()->get_domain(j));
+                        }
+                    }
+                }
+            }
+        }
+        if (!m_new_tail.empty()) {
+            func_decl *common_tail_sym = m_ctx.mk_fresh_head_predicate(r->get_decl()->get_name(), symbol("common"), m_var_bindings.size(), m_var_sorts.c_ptr());
+            common_tail = m_ctx.get_manager().mk_app(common_tail_sym, m_var_bindings.size(), m_var_bindings.c_ptr());
+            return m_ctx.get_rule_manager().mk(common_tail, m_new_tail.size(), m_new_tail.c_ptr(), m_new_tail_neg.c_ptr());
+        } else {
+            return 0;
+        }
     }
 }

@@ -90,6 +90,7 @@ namespace datalog {
         void generate_mapping(const dataflow_engine<tuple_set>& engine, mapping_map& mappings, const rule_set& src, rule_set& trg);
         void translate_rule(const dataflow_engine<tuple_set>& engine, const mapping_map& mappings, rule* r, rule_set& trg);
         app* get_negation_replacement(func_decl* sym, expr_ref_vector& inst, const dataflow_engine<tuple_set>& engine, const mapping_map& mappings, rule_set& trg);
+        rule* create_common_tail(const rule* r, app_ref& common_tail);
     public:
         mk_rule_exploder2(context & ctx, unsigned threshold = 1, unsigned priority = 40000);
         rule_set * operator()(rule_set const & source);
