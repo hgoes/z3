@@ -75,10 +75,23 @@ namespace datalog {
                 }
             }
         }
+        for (unsigned i = utail_size; i < r->get_tail_size(); ++i) {
+            app* el = r->get_tail(i);
+            // Make the buffer large enough for all var indices
+            for (unsigned j = 0; j < el->get_num_args(); ++j) {
+                expr* arg = el->get_arg(j);
+                if (is_var(arg)) {
+                    const unsigned vidx = to_var(arg)->get_idx();
+                    if (max_vidx < vidx) {
+                        max_vidx = vidx;
+                    }
+                }
+            }
+        }
         buffer.resize(max_vidx + 1, 0);
         bool new_facts = false;
         bool valid_iter = true;
-        while(valid_iter) {
+        while (valid_iter) {
             bool feasible = true;
             buffer.fill(0);
             for (unsigned i = 0; i < utail_size; ++i) {
@@ -115,6 +128,57 @@ namespace datalog {
                 if (!feasible) {
                     //std::cout << "Infeasible tuple." << std::endl;
                     break;
+                }
+            }
+            if (feasible) {
+                // Process equalities in the interpreted tail
+                for (unsigned j = r->get_uninterpreted_tail_size(); j < r->get_tail_size(); ++j) {
+                    app *elem = r->get_tail(j);
+                    if (ctx.m.is_eq(elem) && !r->is_neg_tail(j)) {
+                        expr *lhs = elem->get_arg(0);
+                        expr *rhs = elem->get_arg(1);
+                        if (is_var(lhs)) {
+                            const unsigned l_idx = to_var(lhs)->get_idx();
+                            if (is_var(rhs)) {
+                                const unsigned r_idx = to_var(rhs)->get_idx();
+                                if (buffer[l_idx]) {
+                                    if (buffer[r_idx]) {
+                                        if (buffer[l_idx] != buffer[r_idx]) {
+                                            feasible = false;
+                                            break;
+                                        }
+                                    } else {
+                                        buffer[r_idx] = buffer[l_idx];
+                                    }
+                                } else {
+                                    if (buffer[r_idx]) {
+                                        buffer[l_idx] = buffer[r_idx];
+                                    }
+                                }
+                            } else if (ctx.m.is_value(rhs)) {
+                                if (buffer[l_idx]) {
+                                    if (buffer[l_idx] != rhs) {
+                                        feasible = false;
+                                        break;
+                                    }
+                                } else {
+                                    buffer[l_idx] = rhs;
+                                }
+                            }
+                        } else if(ctx.m.is_value(lhs)) {
+                            if (is_var(rhs)) {
+                                const unsigned r_idx = to_var(rhs)->get_idx();
+                                if (buffer[r_idx]) {
+                                    if (buffer[r_idx] != lhs) {
+                                        feasible = false;
+                                        break;
+                                    }
+                                } else {
+                                    buffer[r_idx] = lhs;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             if (feasible) {
@@ -176,9 +240,33 @@ namespace datalog {
             const unsigned idx = m_indices[i];
             expr* arg = r->get_head()->get_arg(idx);
             if (is_var(arg)) {
-                delete_column(i);
-                remove_duplicates();
-                new_facts = true;
+                const unsigned arg_idx = to_var(arg)->get_idx();
+                bool is_determined = false;
+                for (unsigned j = r->get_uninterpreted_tail_size(); j < r->get_tail_size(); ++j) {
+                    app *elem = r->get_tail(j);
+                    if (ctx.m.is_eq(elem)) {
+                        expr *lhs = elem->get_arg(0);
+                        expr *rhs = elem->get_arg(1);
+                        if (lhs == arg) {
+                            if (ctx.m.is_value(rhs)) {
+                                buffer[i++] = rhs;
+                                is_determined = true;
+                                break;
+                            }
+                        } else if (rhs == arg) {
+                            if (ctx.m.is_value(lhs)) {
+                                buffer[i++] = lhs;
+                                is_determined = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!is_determined) {
+                    delete_column(i);
+                    remove_duplicates();
+                    new_facts = true;
+                }
             } else {
                 buffer[i++] = arg;
             }
@@ -264,6 +352,18 @@ namespace datalog {
                 }
             }
         }
+        for (unsigned i = r->get_uninterpreted_tail_size(); i < r->get_tail_size(); ++i) {
+            app *elem = r->get_tail(i);
+            for (unsigned j = 0; j < elem->get_num_args(); ++j) {
+                expr *arg = elem->get_arg(j);
+                if (is_var(arg)) {
+                    const unsigned vidx = to_var(arg)->get_idx();
+                    if (max_vidx < vidx) {
+                        max_vidx = vidx;
+                    }
+                }
+            }
+        }
         if (nrows == 0 && ncols == 0) {
             buffer.reset();
             buffer.resize(max_vidx + 1);
@@ -292,6 +392,57 @@ namespace datalog {
                         if (m_tuples[i*ncols + j] != arg) {
                             feasible = false;
                             break;
+                        }
+                    }
+                }
+                if (feasible) {
+                    for (unsigned i = r->get_uninterpreted_tail_size(); i < r->get_tail_size(); ++i) {
+                        app *elem = r->get_tail(i);
+                        if (ctx.m.is_eq(elem)) {
+                            expr *lhs = elem->get_arg(0);
+                            expr *rhs = elem->get_arg(1);
+                            if (is_var(lhs)) {
+                                const unsigned lidx = to_var(lhs)->get_idx();
+                                if (is_var(rhs)) {
+                                    const unsigned ridx = to_var(rhs)->get_idx();
+                                    if (buffer[lidx]) {
+                                        if (buffer[ridx]) {
+                                            if (buffer[lidx] != buffer[ridx]) {
+                                                feasible = false;
+                                            }
+                                        } else {
+                                            buffer[ridx] = buffer[lidx];
+                                        }
+                                    } else {
+                                        if (buffer[ridx]) {
+                                            buffer[lidx] = buffer[ridx];
+                                        }
+                                    }
+                                } else if (ctx.m.is_value(rhs)) {
+                                    if (buffer[lidx]) {
+                                        if (buffer[lidx] != rhs) {
+                                            feasible = false;
+                                        }
+                                    } else {
+                                        buffer[lidx] = rhs;
+                                    }
+                                }
+                            } else if(ctx.m.is_value(lhs)) {
+                                if (is_var(rhs)) {
+                                    const unsigned ridx = to_var(rhs)->get_idx();
+                                    if (buffer[ridx]) {
+                                        if (buffer[ridx] != lhs) {
+                                            feasible = false;
+                                        }
+                                    } else {
+                                        buffer[ridx] = lhs;
+                                    }
+                                } else if (ctx.m.is_value(rhs)) {
+                                    if (lhs != rhs) {
+                                        feasible = false;
+                                    }
+                                }
+                            }
                         }
                     }
                 }

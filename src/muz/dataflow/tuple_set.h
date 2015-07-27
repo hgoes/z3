@@ -6,7 +6,6 @@
 #include "ast.h"
 #include "vector.h"
 #include "dl_rule.h"
-#include "bit_vector.h"
 
 namespace datalog {
     struct tuple_set_ctx;
